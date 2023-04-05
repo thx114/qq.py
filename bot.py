@@ -1,10 +1,14 @@
+import base64
 import json
-import math
 import os
 import re
 import time
 import glob
+
+from io import BytesIO
+from PIL import PngImagePlugin
 from revChatGPT.V3 import Chatbot
+import webuiapi
 import botpy
 import random
 
@@ -84,7 +88,6 @@ async def chat(m, s, any):
         text += data
         if time.time() - time_now > cfg['Chat_stream_waitTime'] and re.search(r'(\n|。| \.|\?)', data):
             info('[chatGPT] time: %s', str(time_now) + '>' + str(time.time()))
-            print(time_now, '>', time.time(), time.time() - time_now)
             time_now = time.time()
             await s.api.post_message(channel_id=m.channel_id, content=text + ' ', msg_id=m.id)
             text = ''
@@ -92,9 +95,32 @@ async def chat(m, s, any):
 
 
 async def tag(m, s, any):
+    info('[chatGPT api] %s', '开始询问 api')
     system_prompt = Presets['PromptGenerator']
     chatbot = Chatbot(api_key=cfg['apikey'], system_prompt=system_prompt)
-    chatbot.ask(any)
+    outData = chatbot.ask(any)
+    info('[chatGPT api] 返回 %s', outData)
+    return outData
+
+
+async def text2image(m, s, text):
+    Prompt = await tag(m, s, text)
+    if '.AIP' in Prompt:
+        Prompt = Prompt.replace(r'.*.AKI\s*', '')
+        info('[Stable-Diffusion] %s', '开始询问 api')
+        result1 = api.txt2img(
+            prompt=Prompt,
+            negative_prompt=cfg['text2img_negative_prompt'],
+            steps=cfg['text2img_step'],
+        )
+        image = result1.image
+        info('[Stable-Diffusion] %s', '返回图片')
+        with BytesIO() as buffer:
+            image.save(buffer, format='PNG')
+            image_bytes = buffer.getvalue()
+        resp = f"base64://{image_bytes}"
+        await s.api.post_message(channel_id=m.channel_id, image=resp, msg_id=m.id)
+    return ''
 
 
 def save_cfg():
@@ -127,7 +153,8 @@ DefaultData = {
     'botToken': 'AAAAABBBBB22222rrrrrwwwww84XT6s',
     'ownerID': '123456789',
     'Chat_stream_waitTime': 2,
-    'Presets_directory_Path': './presets'
+    'Presets_directory_Path': './presets',
+    'stable-diffusion-webui_proxy': 'http://127.0.0.1:7860'
 }
 for i in DefaultData:
     try:
@@ -147,9 +174,13 @@ for file_path in glob.glob(os.path.join(cfg['Presets_directory_Path'], '*.txt'))
         content = file.read()
     # 将文件内容添加到字典中
     fileName = os.path.basename(file_path).replace('.txt', '')
-    cfg[fileName] = content
+    Presets[fileName] = content
     info(f'[PresetsLoad] 加载预设: %s', fileName)
-
+try:
+    ip = cfg['stable-diffusion-webui_proxy'].split(':')
+    api = webuiapi.WebUIApi(host=ip[0], port=ip[1])
+except:
+    error('[Stable-Diffusion] %s', 'api加载错误' + str())
 save_cfg()
 
 client.run(appid=cfg['botAppID'], token=cfg['botToken'])
